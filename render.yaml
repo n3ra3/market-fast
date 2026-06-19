@@ -1,0 +1,31 @@
+# Render Blueprint — описание сервиса как код.
+# Можно задеплоить через Render Dashboard -> New -> Blueprint (укажет этот файл),
+# либо создать Web Service вручную (см. README/инструкцию).
+services:
+  - type: web
+    name: market-fastbuy
+    runtime: docker
+    region: frankfurt          # ближе всего к инфраструктуре Market.CSGO -> меньше задержка покупки
+    plan: starter              # starter ($7/мес) = всегда онлайн, без cold start. Для боевого снайпинга важно. Можно free для тестов.
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health   # Render сам проверяет живость по этому пути
+    autoDeploy: true           # авто-передеплой при git push
+    envVars:
+      # Секреты — задаются в дашборде (sync:false = не хранить в этом файле/репо)
+      - key: MARKET_API_KEY
+        sync: false
+      - key: MARKET_TELEGRAM_TOKEN
+        sync: false
+      - key: MARKET_TELEGRAM_CHAT_ID
+        sync: false
+      # Несекретные настройки — можно держать прямо здесь
+      - key: MARKET_CURRENCY
+        value: USD
+      - key: DISCOVERY_MODE
+        value: "0"
+      - key: MARKET_MAX_RPS
+        value: "4"
+      - key: NOTIFY_ACTIVITY
+        value: "1"
+      - key: NOTIFY_ACTIVITY_INTERVAL_SEC
+        value: "20"

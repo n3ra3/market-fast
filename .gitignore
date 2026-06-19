@@ -1,0 +1,14 @@
+# СЕКРЕТЫ — никогда не коммитить
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+env/
+
+# Логи / мусор
+*.log
+.DS_Store

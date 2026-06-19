@@ -1,0 +1,12 @@
+.env
+*.pyc
+__pycache__/
+.venv/
+venv/
+.git/
+.gitignore
+*.log
+*.csv
+state.json*
+processed_ids.json
+.DS_Store

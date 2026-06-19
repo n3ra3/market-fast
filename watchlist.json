@@ -1,0 +1,8 @@
+{
+  "_comment": "Постоянный WatchList. Лимиты тут НЕ хранятся — они только в памяти и задаются в Telegram. Можно писать строкой-именем, либо объектом {\"name\": \"...\"}, либо явным {\"name_id\": 12345}.",
+  "items": [
+    "Dreams & Nightmares Case",
+    "Kilowatt Case",
+    "Sealed Dead Hand Terminal"
+  ]
+}
