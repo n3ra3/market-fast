@@ -6,7 +6,7 @@ services:
     name: market-fastbuy
     runtime: docker
     region: frankfurt          # ближе всего к инфраструктуре Market.CSGO -> меньше задержка покупки
-    plan: starter              # starter ($7/мес) = всегда онлайн, без cold start. Для боевого снайпинга важно. Можно free для тестов.
+    plan: free              # starter ($7/мес) = всегда онлайн, без cold start. Для боевого снайпинга важно. Можно free для тестов.
     dockerfilePath: ./Dockerfile
     healthCheckPath: /health   # Render сам проверяет живость по этому пути
     autoDeploy: true           # авто-передеплой при git push
