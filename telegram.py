@@ -14,6 +14,7 @@ Telegram: ТОЛЬКО информирование и управление ли
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 
 import aiohttp
@@ -24,12 +25,18 @@ import names
 import state
 
 _session: aiohttp.ClientSession | None = None
-# chat_id -> name_id, ожидание ввода цены
+# chat_id -> name_id, ожидание ввода лимита ПОКУПКИ
 _pending_price: dict[str, int] = {}
+# chat_id -> name_id, ожидание ввода пола РЕПРАЙСЕРА (продажа)
+_pending_floor: dict[str, int] = {}
 # id последнего сообщения-меню (чтобы редактировать на месте / удалять старое)
 _menu_msg_id: int | None = None
 # id сообщения-подсказки «введи цену» (удаляем после ответа)
 _prompt_msg_id: int | None = None
+# Текущий экран единого меню: "main" (покупка) | "sell" (репрайсер/продажа)
+_screen: str = "main"
+# name_id -> развёрнутый в экране «Продажа» стакан: {ts, asks, bids}
+_book_cache: dict[int, dict] = {}
 
 
 def _units(value: float) -> int:
@@ -107,9 +114,84 @@ def _menu_keyboard() -> dict:
             {"text": f"⚙ Set · {_short(it.label)}", "callback_data": f"set:{it.name_id}"},
             {"text": f"✖ Clear · {_short(it.label)}", "callback_data": f"clr:{it.name_id}"},
         ])
+    rows.append([{"text": "🏷 Продажа · репрайсер", "callback_data": "sell"}])
     rows.append([{"text": "🔄 Refresh", "callback_data": "refresh"}])
     rows.append([{"text": "🛑 DISARM ALL → SCAN", "callback_data": "disarm"}])
     return {"inline_keyboard": rows}
+
+
+# ── Экран «Продажа» (репрайсер) ────────────────────────────────────────────
+def _book_lines(nid: int) -> list[str]:
+    """Развёрнутый стакан для предмета, если пользователь его запросил."""
+    b = _book_cache.get(nid)
+    if not b:
+        return []
+    lines = ["", "<b>Стакан</b> (ask ↑ / bid ↓):"]
+    asks = b.get("asks") or []
+    bids = b.get("bids") or []
+    if asks:
+        lines.append("  <i>продажа:</i> " + "  ".join(
+            f"{_fmt(p)}×{t}" for p, t in asks) )
+    else:
+        lines.append("  <i>продажа:</i> —")
+    if bids:
+        lines.append("  <i>покупка:</i> " + "  ".join(
+            f"{_fmt(p)}×{t}" for p, t in bids))
+    else:
+        lines.append("  <i>покупка:</i> —")
+    return lines
+
+
+def _sell_text() -> str:
+    view = state.repricer_view
+    lines = ["<b>🏷 Продажа — репрайсер</b>"]
+    armed = state.repricer_armed_count()
+    if not view:
+        lines.append("")
+        lines.append("<i>Нет активных лотов на продаже</i> (или ещё не обновилось).")
+        lines.append("Нажми Refresh, чтобы подтянуть /items.")
+        return "\n".join(lines)
+    lines.append(f"вооружено полов: {armed} · лотов: {len(view)}")
+    lines.append("")
+    for nid, v in view.items():
+        floor = v.get("floor_units")
+        my = v.get("my_min_units")
+        comp = v.get("competitor_units")
+        n_lots = len(v.get("lots") or [])
+        lots_sfx = f" ×{n_lots}" if n_lots > 1 else ""
+        if floor is None:
+            lines.append(f"○ {_short(v['label'], 22)}{lots_sfx} — моя {_fmt(my)} · пол — · <i>off</i>")
+        else:
+            if comp is None:
+                top = "🏷 нет конкурентов" if v.get("is_top") else "?"
+            else:
+                top = "👑 топ" if v.get("is_top") else f"⚠ не топ (конк. {_fmt(comp)})"
+            lines.append(f"● <b>{_short(v['label'], 22)}</b>{lots_sfx} — моя {_fmt(my)} · "
+                         f"пол {_fmt(floor)} · {top}")
+        lines += _book_lines(nid)
+    return "\n".join(lines)
+
+
+def _sell_keyboard() -> dict:
+    rows: list[list[dict]] = []
+    for nid, v in state.repricer_view.items():
+        armed = state.get_floor(nid) is not None
+        rows.append([
+            {"text": f"⚙ Пол · {_short(v['label'])}", "callback_data": f"rset:{nid}"},
+            {"text": ("✖ Снять" if armed else "—"), "callback_data": f"rclr:{nid}"},
+        ])
+        rows.append([{"text": f"📖 Стакан · {_short(v['label'])}", "callback_data": f"book:{nid}"}])
+    rows.append([{"text": "🔙 Назад", "callback_data": "main"},
+                 {"text": "🔄 Refresh", "callback_data": "srefresh"}])
+    if state.repricer_armed_count():
+        rows.append([{"text": "🛑 Снять все полы", "callback_data": "rdisarm"}])
+    return {"inline_keyboard": rows}
+
+
+def _render() -> tuple[str, dict]:
+    if _screen == "sell":
+        return _sell_text(), _sell_keyboard()
+    return _status_text(), _menu_keyboard()
 
 
 async def show_menu(*, edit_msg_id: int | None = None, force_new: bool = False) -> None:
@@ -117,7 +199,7 @@ async def show_menu(*, edit_msg_id: int | None = None, force_new: bool = False) 
        - callback (нажатие кнопки) -> редактируем на месте (edit_msg_id);
        - команда / установка лимита -> удаляем старое меню и шлём свежее вниз."""
     global _menu_msg_id
-    text, kb = _status_text(), _menu_keyboard()
+    text, kb = _render()
 
     if not force_new:
         target = edit_msg_id or _menu_msg_id
@@ -166,9 +248,70 @@ def _cq_msg_id(cq: dict) -> int | None:
 
 
 async def _handle_callback(cq: dict) -> None:
+    global _screen
     cq_id = cq.get("id", "")
     data = cq.get("data", "")
     msg_id = _cq_msg_id(cq)
+
+    # ── Навигация между экранами ─────────────────────────────────────────
+    if data == "sell":
+        _screen = "sell"
+        await _answer_callback(cq_id)
+        await show_menu(edit_msg_id=msg_id)
+        return
+    if data == "main":
+        _screen = "main"
+        _book_cache.clear()
+        await _answer_callback(cq_id)
+        await show_menu(edit_msg_id=msg_id)
+        return
+
+    # ── Экран «Продажа» (репрайсер) ──────────────────────────────────────
+    if data == "srefresh":
+        import repricer  # локальный импорт: избегаем циклической зависимости
+        ok = await repricer.refresh_view()
+        await _answer_callback(cq_id, "Обновлено" if ok else "Не удалось (/items)")
+        await show_menu(edit_msg_id=msg_id)
+        return
+    if data == "rdisarm":
+        n = state.disarm_repricer()
+        await _answer_callback(cq_id, f"Снято полов: {n}")
+        await show_menu(edit_msg_id=msg_id)
+        return
+    if data.startswith("rclr:"):
+        nid = int(data[5:])
+        ok = state.clear_floor(nid)
+        v = state.repricer_view.get(nid)
+        await _answer_callback(cq_id, f"Пол снят: {v['label']}" if (ok and v) else "Нет пола")
+        await show_menu(edit_msg_id=msg_id)
+        return
+    if data.startswith("rset:"):
+        nid = int(data[5:])
+        v = state.repricer_view.get(nid)
+        if not v:
+            await _answer_callback(cq_id, "Лот исчез — Refresh")
+            return
+        _pending_floor[str(config.TELEGRAM_CHAT_ID)] = nid
+        _pending_price.pop(str(config.TELEGRAM_CHAT_ID), None)  # не путаем с покупкой
+        await _answer_callback(cq_id)
+        await _send_prompt(f"Введи <b>пол</b> в USD для <b>{v['label']}</b> "
+                           f"(ниже не опускаемся), напр. 0.25")
+        return
+    if data.startswith("book:"):
+        nid = int(data[5:])
+        v = state.repricer_view.get(nid)
+        if not v:
+            await _answer_callback(cq_id, "Лот исчез — Refresh")
+            return
+        import market_client
+        import repricer  # локальный импорт
+        book = await market_client.bid_ask(v["hash_name"])
+        asks, bids = repricer.parse_book(book, depth=config.BOOK_DEPTH)
+        _book_cache[nid] = {"ts": time.time(), "asks": asks, "bids": bids}
+        await _answer_callback(cq_id, "Стакан обновлён" if book is not None else "bid-ask не ответил")
+        await show_menu(edit_msg_id=msg_id)
+        return
+
     if data == "refresh":
         await _answer_callback(cq_id, "Обновлено")
         await show_menu(edit_msg_id=msg_id)
@@ -198,7 +341,7 @@ async def _handle_callback(cq: dict) -> None:
 
 
 async def _handle_message(msg: dict) -> None:
-    global _prompt_msg_id
+    global _prompt_msg_id, _screen
     chat_id = str(msg.get("chat", {}).get("id", ""))
     if chat_id != str(config.TELEGRAM_CHAT_ID):
         return
@@ -207,6 +350,8 @@ async def _handle_message(msg: dict) -> None:
         return
 
     if text.startswith("/menu") or text.startswith("/start") or text.startswith("/status"):
+        _screen = "main"
+        _book_cache.clear()
         await show_menu(force_new=True)
         return
     if text.startswith("/disarm"):
@@ -214,7 +359,27 @@ async def _handle_message(msg: dict) -> None:
         await show_menu(force_new=True)
         return
 
-    # Ввод цены для предмета, по которому ждём ответ
+    # Ввод ПОЛА репрайсера (продажа), если ждём его
+    fnid = _pending_floor.get(chat_id)
+    if fnid is not None:
+        try:
+            value = float(text.replace(",", "."))
+        except ValueError:
+            await _send_prompt("Не похоже на число. Пример: 0.25")
+            return
+        if value <= 0:
+            await _send_prompt("Пол должен быть больше 0.")
+            return
+        state.set_floor(fnid, _units(value))
+        _pending_floor.pop(chat_id, None)
+        if _prompt_msg_id is not None:
+            await _api("deleteMessage", {"chat_id": config.TELEGRAM_CHAT_ID, "message_id": _prompt_msg_id})
+            _prompt_msg_id = None
+        # остаёмся на экране «Продажа», редактируем меню на месте
+        await show_menu()
+        return
+
+    # Ввод лимита ПОКУПКИ для предмета, по которому ждём ответ
     nid = _pending_price.get(chat_id)
     if nid is not None:
         try:
@@ -280,6 +445,15 @@ async def notify_uncertain(*, label: str, status: int, reason: str) -> None:
 
 async def notify_fail(*, label: str, status: int, reason: str) -> None:
     await send(f"❌ Buy failed · {label}\nHTTP {status} · <code>{reason}</code>")
+
+
+async def notify_reprice(*, label: str, old_units: int, new_units: int,
+                         competitor_units: int, floor_units: int) -> None:
+    await send(
+        f"🔽 <b>Repriced</b>: {label}\n"
+        f"{_fmt(old_units)} → {_fmt(new_units)} "
+        f"(конкурент {_fmt(competitor_units)}, пол {_fmt(floor_units)})"
+    )
 
 
 async def activity_reporter_loop() -> None:

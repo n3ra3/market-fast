@@ -129,6 +129,79 @@ async def get_money() -> dict[str, Any] | None:
         return None
 
 
+# ── Репрайсер (продажа) ─────────────────────────────────────────────────────
+# Все запросы ниже идут с priority=False: переоценка НИКОГДА не задерживает
+# покупку (у покупки priority=True всегда проходит вперёд в rate_limiter).
+
+async def get_my_items() -> list[dict[str, Any]] | None:
+    """Мои лоты, выставленные на продажу (/items). None -> запрос не удался
+    (цикл репрайсера просто пропустит итерацию)."""
+    s = await init()
+    await limiter.acquire(priority=False)
+    try:
+        async with s.get(config.ITEMS_URL, params={"key": config.API_KEY}) as r:
+            if r.status != 200:
+                return None
+            import json
+            data = json.loads(await r.text())
+    except Exception:
+        return None
+    if isinstance(data, dict):
+        items = data.get("items")
+        return items if isinstance(items, list) else []
+    if isinstance(data, list):
+        return data
+    return None
+
+
+async def bid_ask(hash_name: str) -> dict[str, Any] | None:
+    """Стакан по предмету (/bid-ask): {'ask':[{price,total}], 'bid':[...], ...}.
+    Цена в ask/bid — строка в валюте (напр. '441.5900'), не units."""
+    s = await init()
+    params: dict[str, Any] = {
+        "key": config.API_KEY, "hash_name": hash_name,
+        "with_alfaskins": config.BIDASK_WITH_ALFASKINS,
+    }
+    await limiter.acquire(priority=False)
+    try:
+        async with s.get(config.BID_ASK_URL, params=params) as r:
+            if r.status != 200:
+                return None
+            import json
+            return json.loads(await r.text())
+    except Exception:
+        return None
+
+
+async def set_price(*, item_id: int | str, price_units: int
+                    ) -> tuple[int, dict[str, Any] | None, str]:
+    """Переставить цену лота (/set-price). price_units=0 -> снять с продажи.
+    Возвращает (http_status, json|None, raw_text). Осторожно, как в /buy:
+    при HTTP 500 / сети вызывающий НЕ повторяет вслепую."""
+    s = await init()
+    params: dict[str, Any] = {
+        "key": config.API_KEY, "item_id": item_id,
+        "price": price_units, "cur": config.SELL_CURRENCY,
+    }
+    await limiter.acquire(priority=False)
+    try:
+        async with s.get(config.SET_PRICE_URL, params=params) as r:
+            text = await r.text()
+            status = r.status
+    except asyncio.TimeoutError:
+        return -1, None, "timeout"
+    except aiohttp.ClientError as e:
+        return -1, None, f"network: {e}"
+    data: dict[str, Any] | None = None
+    if text[:1] in ("{", "["):
+        try:
+            import json
+            data = json.loads(text)
+        except Exception:
+            data = None
+    return status, data, text
+
+
 async def warmup_loop() -> None:
     """Держим соединение тёплым: лёгкий get-money раз в WARMUP_INTERVAL_SEC.
     Низкий приоритет — никогда не мешает покупке."""

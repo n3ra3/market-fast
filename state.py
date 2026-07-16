@@ -101,3 +101,43 @@ def disarm_all() -> int:
             it.limit_units = None
             n += 1
     return n
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Репрайсер (полностью отдельно от лимитов покупки).
+#
+# Пол-лимит по каждому предмету (ключ = name_id) живёт ТОЛЬКО в RAM и сбрасыва-
+# ется при рестарте — как и лимиты покупки. Пусто при старте -> репрайсер по
+# всем лотам выключен, пока пользователь не задаст пол через Telegram.
+# ──────────────────────────────────────────────────────────────────────────
+# name_id -> пол в units (ниже не опускаемся)
+repricer_floors: dict[int, int] = {}
+
+# Снапшот живых лотов для Telegram-меню «Продажа». Репрайсер переписывает его
+# каждый цикл из /items; Telegram только читает. Структура на name_id:
+#   {label, hash_name, lots:[{item_id, price_units, position}],
+#    my_min_units, competitor_units, is_top, floor_units, updated_ts}
+repricer_view: dict[int, dict] = {}
+
+
+def set_floor(name_id: int, floor_units: int) -> None:
+    repricer_floors[name_id] = floor_units
+
+
+def get_floor(name_id: int) -> int | None:
+    return repricer_floors.get(name_id)
+
+
+def clear_floor(name_id: int) -> bool:
+    return repricer_floors.pop(name_id, None) is not None
+
+
+def repricer_armed_count() -> int:
+    return len(repricer_floors)
+
+
+def disarm_repricer() -> int:
+    """Снять все полы репрайсера. Возвращает число снятых."""
+    n = len(repricer_floors)
+    repricer_floors.clear()
+    return n

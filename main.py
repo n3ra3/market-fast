@@ -24,6 +24,7 @@ import centrifugo_client
 import config
 import market_client
 import names
+import repricer
 import scanner
 import state
 import telegram
@@ -121,6 +122,8 @@ async def main() -> None:
     tasks.append(asyncio.create_task(market_client.warmup_loop()))
     tasks.append(asyncio.create_task(telegram.poll_loop()))
     tasks.append(asyncio.create_task(telegram.activity_reporter_loop()))
+    # Репрайсер — отдельная задача, развязана с покупкой (priority=False запросы).
+    tasks.append(asyncio.create_task(repricer.run_loop()))
     runner = await _start_health()
     await telegram.startup()
     tasks.append(asyncio.create_task(centrifugo_client.run()))

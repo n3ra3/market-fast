@@ -71,6 +71,10 @@ GET_WS_TOKEN_URL: str = f"{API_BASE}/get-ws-token"
 BUY_URL: str = f"{API_BASE}/buy"
 GET_MONEY_URL: str = f"{API_BASE}/get-money"
 NAMES_URL: str = f"{API_BASE}/dictionary/names.json"
+# Репрайсер (продажа): мои лоты, стакан по предмету, перестановка цены.
+ITEMS_URL: str = f"{API_BASE}/items"          # мои лоты, выставленные на продажу
+BID_ASK_URL: str = f"{API_BASE}/bid-ask"      # стакан по hash_name (ask+bid)
+SET_PRICE_URL: str = f"{API_BASE}/set-price"  # переставить цену / снять (price=0)
 
 # ──────────────────────────────────────────────────────────────────────────
 # WebSocket (Centrifugo)
@@ -112,6 +116,33 @@ OFFER_DEDUPE_TTL_SEC: float = _get_float("OFFER_DEDUPE_TTL_SEC", 30.0)
 BUY_QUEUE_MAXSIZE: int = _get_int("BUY_QUEUE_MAXSIZE", 1000)
 # Сколько воркеров-покупателей параллельно читают очередь.
 BUYER_WORKERS: int = _get_int("BUYER_WORKERS", 2)
+
+# ──────────────────────────────────────────────────────────────────────────
+# Репрайсер (удержание моих лотов на первом месте в продаже)
+# ──────────────────────────────────────────────────────────────────────────
+# Полностью независимая подсистема, развязанная с покупкой. Отдельная asyncio-
+# задача, все запросы к Market идут через общий rate_limiter с НИЗКИМ приоритетом
+# (priority=False) -> переоценка никогда не задерживает покупку.
+#
+# ВАЖНО (безопасность, как у лимитов покупки): пол-лимит по каждому лоту живёт
+# только в RAM и сбрасывается при рестарте. После старта репрайсер по каждому
+# лоту выключен, пока пользователь вручную не задаст пол через Telegram.
+REPRICER_ENABLED: bool = _get_bool("REPRICER_ENABLED", True)
+# Как часто прогонять цикл переоценки (сек).
+REPRICE_INTERVAL_SEC: float = _get_float("REPRICE_INTERVAL_SEC", 60.0)
+# Минимальный шаг: на сколько units ставить НИЖЕ конкурента, чтобы держать топ.
+REPRICE_STEP_UNITS: int = _get_int("REPRICE_STEP_UNITS", 1)
+# Валюта для set-price (по умолчанию = валюте аккаунта/канала).
+SELL_CURRENCY: str = (_get("SELL_CURRENCY", CURRENCY)).upper()
+# Стакан bid-ask: включать ли alfaskins (0 = исключать, как в API по умолчанию).
+BIDASK_WITH_ALFASKINS: int = 1 if _get_bool("BIDASK_WITH_ALFASKINS", False) else 0
+# Формат цены в ответах рыночного чтения (bid-ask): "value" (десятичная валюта,
+# напр. "441.5900") или "units" (целые units). По докам bid-ask отдаёт "value".
+MARKET_READ_PRICE_FORMAT: str = (_get("MARKET_READ_PRICE_FORMAT", "value")).lower()
+# Сколько первых сырых ответов /items и /bid-ask логировать целиком (калибровка).
+REPRICE_DISCOVERY_SAMPLE: int = _get_int("REPRICE_DISCOVERY_SAMPLE", 5)
+# Сколько уровней стакана показывать в Telegram по каждой стороне (ask/bid).
+BOOK_DEPTH: int = _get_int("BOOK_DEPTH", 3)
 
 # ──────────────────────────────────────────────────────────────────────────
 # Discovery / парсинг WS-пуша
