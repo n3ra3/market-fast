@@ -63,11 +63,11 @@ def _read_price_to_units(raw) -> int | None:
 
 
 def _items_price_to_units(raw) -> int | None:
-    """Цена из /items — целые units (как в /buy и /set-price)."""
-    try:
-        return int(round(float(raw)))
-    except (TypeError, ValueError):
-        return None
+    """Цена из /items. Как и WS-канал / bid-ask, market.csgo отдаёт её как
+    ДЕСЯТИЧНОЕ значение валюты (напр. 3 == $3), а не целые units. Конвертируем
+    так же (× scale). MARKET_READ_PRICE_FORMAT=units переключит на целые units.
+    ВНИМАНИЕ: запись (/buy, /set-price) наоборот — в целых units (×1000)."""
+    return _read_price_to_units(raw)
 
 
 def _int(raw, default: int = 0) -> int:
