@@ -121,12 +121,7 @@ STEAM_LOGIN_SECURE: str = _get("STEAM_LOGIN_SECURE")
 # Как часто обновлять webapi_token (сек). Токен валиден 24ч — берём с запасом.
 STEAM_TOKEN_TTL_SEC: float = _get_float("STEAM_TOKEN_TTL_SEC", 12 * 3600.0)
 # Необязательный прокси для валидации токена Steam'ом (http://login:pass@ip:port).
-# Если ping-new стабильно отдаёт 502 с IP дата-центра — нужен residential-прокси.
 STEAM_PROXY: str = _get("STEAM_PROXY")
-# Повторы внутри одного цикла при транзиентном сбое (502/сеть), прежде чем счесть
-# пинг неудачным. Ловит кратковременные 502, не дожидаясь следующего цикла.
-PING_RETRIES: int = _get_int("PING_RETRIES", 3)
-PING_RETRY_DELAY_SEC: float = _get_float("PING_RETRY_DELAY_SEC", 5.0)
 
 USER_AGENT: str = _get("USER_AGENT", "market-fastbuy/2.0")
 WS_ORIGIN: str = _get("WS_ORIGIN", "https://market.csgo.com")
