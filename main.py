@@ -120,8 +120,8 @@ async def main() -> None:
     for i in range(config.BUYER_WORKERS):
         tasks.append(asyncio.create_task(buyer.worker(queue, i + 1)))
     tasks.append(asyncio.create_task(market_client.warmup_loop()))
-    # Монитор статуса продаж: уведомляет в Telegram, если продажи ушли в офлайн.
-    tasks.append(asyncio.create_task(market_client.sale_keepalive_loop()))
+    # Монитор статуса продаж (по /items): уведомляет в Telegram, если лоты пропали.
+    tasks.append(asyncio.create_task(market_client.sales_monitor_loop()))
     tasks.append(asyncio.create_task(telegram.poll_loop()))
     tasks.append(asyncio.create_task(telegram.activity_reporter_loop()))
     # Репрайсер — отдельная задача, развязана с покупкой (priority=False запросы).
