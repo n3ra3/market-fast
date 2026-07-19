@@ -258,9 +258,10 @@ async def get_steam_token(*, force: bool = False) -> str | None:
     return token
 
 
-async def ping_new(token: str) -> dict[str, Any] | None:
+async def ping_new(token: str) -> dict[str, Any]:
     """POST /ping-new — «онлайн»-статус (v2), держит лоты на продаже. priority=False.
-    Ответ: {'success':true,'ping':'pong','online':true,'p2p':..,'steamApiKey':..}."""
+    Ответ: {'success':true,'ping':'pong','online':true,'p2p':..,'steamApiKey':..}.
+    При не-200 возвращаем реальное тело/статус (для диагностики 502 и т.п.)."""
     s = await init()
     body: dict[str, Any] = {"access_token": token}
     if config.STEAM_PROXY:
@@ -268,12 +269,21 @@ async def ping_new(token: str) -> dict[str, Any] | None:
     await limiter.acquire(priority=False)
     try:
         async with s.post(config.PING_NEW_URL, params={"key": config.API_KEY}, json=body) as r:
-            if r.status != 200:
-                return {"success": False, "message": f"HTTP {r.status}"}
-            import json
-            return json.loads(await r.text())
+            status = r.status
+            text = await r.text()
     except Exception as e:
-        return {"success": False, "message": f"network: {e}"}
+        return {"success": False, "status": -1, "message": f"network: {e}"}
+    if text[:1] in ("{", "["):
+        try:
+            import json
+            data = json.loads(text)
+            if isinstance(data, dict):
+                data.setdefault("status", status)
+                return data
+        except Exception:
+            pass
+    # не-JSON (напр. HTML-страница 502 от Cloudflare) — отдаём статус и кусок тела
+    return {"success": False, "status": status, "message": f"HTTP {status}", "raw": text[:200]}
 
 
 async def _sale_alert(text: str) -> None:
@@ -285,10 +295,37 @@ async def _sale_alert(text: str) -> None:
         logger.debug("sale alert send failed (ignored)")
 
 
+async def _keepalive_attempt() -> tuple[bool, dict[str, Any]]:
+    """Одна попытка держать «онлайн» с повторами при транзиентных 502/сетевых
+    сбоях. Возвращает (успех, последний_ответ)."""
+    last: dict[str, Any] = {"message": "no_token"}
+    for attempt in range(1, config.PING_RETRIES + 1):
+        token = await get_steam_token()
+        if token is None:
+            return False, {"message": "no_token"}
+        data = await ping_new(token)
+        last = data
+        ok = bool(data.get("success"))
+        online = bool(data.get("online", True)) if ok else False
+        if ok and online:
+            logger.debug("sale ping-new ok (p2p={}, steamApiKey={})",
+                         data.get("p2p"), data.get("steamApiKey"))
+            return True, data
+        # Явно невалидный токен -> форсим свежий перед повтором.
+        if "token" in str(data.get("message", "")).lower():
+            await get_steam_token(force=True)
+        if attempt < config.PING_RETRIES:
+            logger.debug("ping-new attempt {}/{} failed ({}), retry in {}s",
+                         attempt, config.PING_RETRIES, data.get("message") or data.get("status"),
+                         config.PING_RETRY_DELAY_SEC)
+            await asyncio.sleep(config.PING_RETRY_DELAY_SEC)
+    return False, last
+
+
 async def sale_keepalive_loop() -> None:
     """Периодический ping-new, чтобы маркет не уводил аккаунт в офлайн и не снимал
     лоты с продажи. Токен обновляется автоматически по куке steamLoginSecure.
-    При сбое — разовый алерт в Telegram (лоты под угрозой), без спама."""
+    При устойчивом сбое — разовый алерт в Telegram (лоты под угрозой), без спама."""
     if not config.SALE_PING_ENABLED:
         logger.info("Sale keep-alive disabled (SALE_PING_ENABLED=0)")
         return
@@ -298,44 +335,40 @@ async def sale_keepalive_loop() -> None:
         await _sale_alert("⚠️ Keep-alive продаж выключен: не задан STEAM_LOGIN_SECURE. "
                           "Лоты будут сниматься с продажи, пока не добавишь куку в env.")
         return
-    logger.info("Sale keep-alive: POST /ping-new every {}s (token via steamLoginSecure)",
-                int(config.PING_INTERVAL_SEC))
+    logger.info("Sale keep-alive: POST /ping-new every {}s (retries={}, token via steamLoginSecure)",
+                int(config.PING_INTERVAL_SEC), config.PING_RETRIES)
     await asyncio.sleep(5.0)  # дать сессии подняться
     prev_ok = True
     while True:
         try:
-            token = await get_steam_token()
-            if token is None:
-                if prev_ok:
-                    await _sale_alert(
-                        "🔴 <b>Не удалось получить Steam-токен</b> — кука "
-                        "steamLoginSecure протухла или неверна. Обнови STEAM_LOGIN_SECURE "
-                        "в env. Лоты могут уйти в офлайн.")
-                prev_ok = False
-                await asyncio.sleep(config.PING_INTERVAL_SEC)
-                continue
-
-            data = await ping_new(token)
-            ok = bool(data and data.get("success"))
-            online = bool(data.get("online", True)) if ok else False
-            # Токен мог протухнуть между обновлениями -> форсим рефреш на след. круге.
-            if not ok and data and "token" in str(data.get("message", "")).lower():
-                await get_steam_token(force=True)
-
-            if ok and online:
-                logger.debug("sale ping-new ok (p2p={}, steamApiKey={})",
-                             data.get("p2p"), data.get("steamApiKey"))
+            ok, data = await _keepalive_attempt()
+            if ok:
                 if not prev_ok:
                     await _sale_alert("🟢 Продажи снова онлайн — ping-new восстановлен.")
                 prev_ok = True
             else:
-                logger.warning("sale ping-new problem: {}", data if data is not None else "no response")
+                logger.warning("sale ping-new failed after {} attempts: {}",
+                               config.PING_RETRIES, data)
                 if prev_ok:
-                    await _sale_alert(
-                        "🔴 <b>Ping продаж не проходит</b> — лоты могут уйти в офлайн "
-                        "и пропасть с продажи.\n"
-                        f"Ответ: <code>{str(data)[:200]}</code>")
+                    await _sale_alert(_keepalive_fail_text(data))
                 prev_ok = False
         except Exception:
             logger.exception("sale keep-alive iteration failed")
         await asyncio.sleep(config.PING_INTERVAL_SEC)
+
+
+def _keepalive_fail_text(data: dict[str, Any]) -> str:
+    """Понятный текст алерта в зависимости от причины сбоя."""
+    if data.get("message") == "no_token":
+        return ("🔴 <b>Не удалось получить Steam-токен</b> — кука steamLoginSecure "
+                "протухла или неверна. Обнови <code>STEAM_LOGIN_SECURE</code> в env. "
+                "Лоты могут уйти в офлайн.")
+    status = data.get("status")
+    body = data.get("message") or data.get("raw") or str(data)
+    tail = ""
+    if status == 502:
+        tail = ("\n\nЭто шлюзовая ошибка: Market не смог провалидировать токен через "
+                "Steam. Если держится — вероятно, нужен residential "
+                "<code>STEAM_PROXY</code> (IP дата-центра Steam не пускает).")
+    return ("🔴 <b>Ping продаж не проходит</b> — лоты могут уйти в офлайн.\n"
+            f"Ответ: <code>{str(body)[:200]}</code>" + tail)
