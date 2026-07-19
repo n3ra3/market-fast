@@ -70,7 +70,9 @@ API_BASE: str = "https://market.csgo.com/api/v2"
 GET_WS_TOKEN_URL: str = f"{API_BASE}/get-ws-token"
 BUY_URL: str = f"{API_BASE}/buy"
 GET_MONEY_URL: str = f"{API_BASE}/get-money"
-PING_URL: str = f"{API_BASE}/ping"       # keep-alive «онлайн», держит лоты на продаже
+PING_NEW_URL: str = f"{API_BASE}/ping-new"  # keep-alive «онлайн» (v2), держит лоты на продаже
+# Откуда берём свежий Steam webapi_token по куке steamLoginSecure.
+STEAM_TOKEN_URL: str = "https://steamcommunity.com/pointssummary/ajaxgetasyncconfig"
 NAMES_URL: str = f"{API_BASE}/dictionary/names.json"
 # Репрайсер (продажа): мои лоты, стакан по предмету, перестановка цены.
 ITEMS_URL: str = f"{API_BASE}/items"          # мои лоты, выставленные на продажу
@@ -105,11 +107,21 @@ WARMUP_INTERVAL_SEC: float = _get_float("WARMUP_INTERVAL_SEC", 60.0)
 # Keep-alive продаж («онлайн»-статус)
 # ──────────────────────────────────────────────────────────────────────────
 # Market.CSGO снимает лоты с продажи, если аккаунт не пингует «онлайн» чаще, чем
-# раз в 3 минуты. Держим лоты выставленными периодическим /ping?v=2.
-# Параметр v=2 обязателен — без него метод отключён на стороне маркета.
+# раз в 3 минуты. Держим лоты выставленными периодическим POST /ping-new.
+#
+# /ping-new требует Steam access_token (webapi_token, JWT, живёт 24ч). Токен
+# получаем автоматически по куке steamLoginSecure из STEAM_TOKEN_URL и кешируем.
+# STEAM_LOGIN_SECURE — ЧУВСТВИТЕЛЬНАЯ Steam-сессия: задаётся только в env (.env
+# в .gitignore), в репозиторий не попадает и в логи не пишется.
 SALE_PING_ENABLED: bool = _get_bool("SALE_PING_ENABLED", True)
-# Интервал (сек). Безопасно держать заметно ниже лимита в 180с.
+# Интервал пинга (сек). Безопасно держать заметно ниже лимита в 180с.
 PING_INTERVAL_SEC: float = _get_float("PING_INTERVAL_SEC", 150.0)
+# Кука steamLoginSecure (полное значение). Без неё keep-alive не работает.
+STEAM_LOGIN_SECURE: str = _get("STEAM_LOGIN_SECURE")
+# Как часто обновлять webapi_token (сек). Токен валиден 24ч — берём с запасом.
+STEAM_TOKEN_TTL_SEC: float = _get_float("STEAM_TOKEN_TTL_SEC", 12 * 3600.0)
+# Необязательный прокси для валидации токена Steam'ом (http://login:pass@ip:port).
+STEAM_PROXY: str = _get("STEAM_PROXY")
 
 USER_AGENT: str = _get("USER_AGENT", "market-fastbuy/2.0")
 WS_ORIGIN: str = _get("WS_ORIGIN", "https://market.csgo.com")
