@@ -120,6 +120,8 @@ async def main() -> None:
     for i in range(config.BUYER_WORKERS):
         tasks.append(asyncio.create_task(buyer.worker(queue, i + 1)))
     tasks.append(asyncio.create_task(market_client.warmup_loop()))
+    # Keep-alive продаж: держим аккаунт «онлайн», чтобы лоты не снимались.
+    tasks.append(asyncio.create_task(market_client.sale_keepalive_loop()))
     tasks.append(asyncio.create_task(telegram.poll_loop()))
     tasks.append(asyncio.create_task(telegram.activity_reporter_loop()))
     # Репрайсер — отдельная задача, развязана с покупкой (priority=False запросы).

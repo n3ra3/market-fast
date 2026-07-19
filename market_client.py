@@ -215,3 +215,59 @@ async def warmup_loop() -> None:
         except Exception:
             logger.debug("warmup ping failed (ignored)")
         await asyncio.sleep(config.WARMUP_INTERVAL_SEC)
+
+
+# ── Keep-alive продаж ────────────────────────────────────────────────────────
+async def ping() -> dict[str, Any] | None:
+    """/ping?v=2 — «онлайн»-статус, держит лоты на продаже. priority=False.
+    Ответ: {'success':true,'ping':'pong','online':true,'p2p':..,'steamApiKey':..}."""
+    s = await init()
+    await limiter.acquire(priority=False)
+    try:
+        async with s.get(config.PING_URL, params={"key": config.API_KEY, "v": 2}) as r:
+            if r.status != 200:
+                return None
+            import json
+            return json.loads(await r.text())
+    except Exception:
+        return None
+
+
+async def _sale_alert(text: str) -> None:
+    """Разовое уведомление в Telegram (ленивый импорт — избегаем цикла)."""
+    try:
+        import telegram
+        await telegram.send(text)
+    except Exception:
+        logger.debug("sale alert send failed (ignored)")
+
+
+async def sale_keepalive_loop() -> None:
+    """Периодический ping, чтобы маркет не уводил аккаунт в офлайн и не снимал
+    лоты с продажи. При сбое пинга — алерт в Telegram (лоты под угрозой)."""
+    if not config.SALE_PING_ENABLED:
+        logger.info("Sale keep-alive ping disabled (SALE_PING_ENABLED=0)")
+        return
+    logger.info("Sale keep-alive: /ping?v=2 every {}s", int(config.PING_INTERVAL_SEC))
+    await asyncio.sleep(5.0)  # дать сессии подняться
+    prev_ok = True
+    while True:
+        data = await ping()
+        ok = bool(data and data.get("success"))
+        online = bool(data.get("online", True)) if ok else False
+        if ok and online:
+            logger.debug("sale ping ok (p2p={}, steamApiKey={})",
+                         data.get("p2p"), data.get("steamApiKey"))
+            if not prev_ok:
+                await _sale_alert("🟢 Продажи снова онлайн — ping восстановлен.")
+            prev_ok = True
+        else:
+            logger.warning("sale ping problem: {}", data if data is not None else "no response")
+            if prev_ok:
+                await _sale_alert(
+                    "🔴 <b>Ping продаж не проходит</b> — лоты могут уйти в офлайн "
+                    "и пропасть с продажи.\n"
+                    f"Ответ: <code>{str(data)[:200]}</code>"
+                )
+            prev_ok = False
+        await asyncio.sleep(config.PING_INTERVAL_SEC)

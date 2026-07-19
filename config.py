@@ -70,6 +70,7 @@ API_BASE: str = "https://market.csgo.com/api/v2"
 GET_WS_TOKEN_URL: str = f"{API_BASE}/get-ws-token"
 BUY_URL: str = f"{API_BASE}/buy"
 GET_MONEY_URL: str = f"{API_BASE}/get-money"
+PING_URL: str = f"{API_BASE}/ping"       # keep-alive «онлайн», держит лоты на продаже
 NAMES_URL: str = f"{API_BASE}/dictionary/names.json"
 # Репрайсер (продажа): мои лоты, стакан по предмету, перестановка цены.
 ITEMS_URL: str = f"{API_BASE}/items"          # мои лоты, выставленные на продажу
@@ -99,6 +100,16 @@ BUY_TIMEOUT_SEC: float = _get_float("BUY_TIMEOUT_SEC", 6.0)
 # Прогрев соединения с market.csgo (чтобы первый /buy не платил за TLS-handshake).
 WARMUP_ENABLED: bool = _get_bool("WARMUP_ENABLED", True)
 WARMUP_INTERVAL_SEC: float = _get_float("WARMUP_INTERVAL_SEC", 60.0)
+
+# ──────────────────────────────────────────────────────────────────────────
+# Keep-alive продаж («онлайн»-статус)
+# ──────────────────────────────────────────────────────────────────────────
+# Market.CSGO снимает лоты с продажи, если аккаунт не пингует «онлайн» чаще, чем
+# раз в 3 минуты. Держим лоты выставленными периодическим /ping?v=2.
+# Параметр v=2 обязателен — без него метод отключён на стороне маркета.
+SALE_PING_ENABLED: bool = _get_bool("SALE_PING_ENABLED", True)
+# Интервал (сек). Безопасно держать заметно ниже лимита в 180с.
+PING_INTERVAL_SEC: float = _get_float("PING_INTERVAL_SEC", 150.0)
 
 USER_AGENT: str = _get("USER_AGENT", "market-fastbuy/2.0")
 WS_ORIGIN: str = _get("WS_ORIGIN", "https://market.csgo.com")
