@@ -147,8 +147,11 @@ REPRICE_INTERVAL_SEC: float = _get_float("REPRICE_INTERVAL_SEC", 60.0)
 REPRICE_STEP_UNITS: int = _get_int("REPRICE_STEP_UNITS", 1)
 # Валюта для set-price (по умолчанию = валюте аккаунта/канала).
 SELL_CURRENCY: str = (_get("SELL_CURRENCY", CURRENCY)).upper()
-# Стакан bid-ask: включать ли alfaskins (0 = исключать, как в API по умолчанию).
-BIDASK_WITH_ALFASKINS: int = 1 if _get_bool("BIDASK_WITH_ALFASKINS", False) else 0
+# Стакан bid-ask: учитывать ли лоты alfaskins.
+# 1 (по умолчанию) — учитываем: это реальные конкуренты на витрине, и без них
+# бот не видел бы их цены и не подрезал бы ниже. 0 — исключить из стакана
+# (тогда конкурентом считается следующий лот выше альфаскинов).
+BIDASK_WITH_ALFASKINS: int = 1 if _get_bool("BIDASK_WITH_ALFASKINS", True) else 0
 # Формат цены в ответах рыночного чтения (bid-ask): "value" (десятичная валюта,
 # напр. "441.5900") или "units" (целые units). По докам bid-ask отдаёт "value".
 MARKET_READ_PRICE_FORMAT: str = (_get("MARKET_READ_PRICE_FORMAT", "value")).lower()
