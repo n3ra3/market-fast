@@ -109,8 +109,21 @@ def _best_competitor_units(asks: list[tuple[int, int]], mine_counts: dict[int, i
 
 
 # ── Цикл ────────────────────────────────────────────────────────────────────
-async def _build_groups() -> dict[int, dict] | None:
-    """GET /items -> группы моих активных лотов по name_id, или None при сбое."""
+# Расшифровка status из /items (по докам market.csgo).
+STATUS_LABELS: dict[int, str] = {
+    1: "на продаже",
+    2: "продан — передать боту",
+    3: "ожидает передачи от продавца",
+    4: "можно забрать",
+    5: "сделка завершена",
+    6: "отменено",
+    7: "продан — ждёт подтверждения покупателем",
+}
+
+
+async def _build_groups() -> tuple[dict[int, dict], list[dict]] | None:
+    """GET /items -> (группы моих АКТИВНЫХ лотов по name_id, список неактивных),
+    или None при сбое запроса."""
     global _items_disc
     items = await market_client.get_my_items()
     if items is None:
@@ -124,17 +137,27 @@ async def _build_groups() -> dict[int, dict] | None:
             logger.info("RAW /items sample #{} (repr) :: {}", _items_disc, repr(items[:3])[:1000])
 
     groups: dict[int, dict] = {}
+    inactive: list[dict] = []
     for it in items:
-        # Только лоты, реально стоящие на продаже (status==1).
-        if _int(it.get("status"), -1) != 1:
-            continue
         hash_name = it.get("market_hash_name") or it.get("hash_name")
         if not hash_name:
             continue
+        status = _int(it.get("status"), -1)
+        price_units = _items_price_to_units(it.get("price"))
+
+        # Не на продаже (продан/передаётся/забирается) — репрайсить нечего,
+        # но показываем в меню, чтобы было видно, почему лот не двигается.
+        if status != 1:
+            inactive.append({"label": hash_name, "status": status,
+                             "price_units": price_units})
+            continue
+
         nid = names.resolve_name(hash_name)
         if nid is None:
-            continue  # предмет не в словаре имён -> репрайсить не можем
-        price_units = _items_price_to_units(it.get("price"))
+            # предмет не в словаре имён -> репрайсить не можем, но не молчим
+            inactive.append({"label": hash_name, "status": status,
+                             "price_units": price_units, "unresolved": True})
+            continue
         item_id = it.get("item_id") or it.get("id")
         if price_units is None or price_units <= 0 or item_id is None:
             continue
@@ -144,7 +167,7 @@ async def _build_groups() -> dict[int, dict] | None:
         g["lots"].append({"item_id": item_id, "price_units": price_units,
                           "position": it.get("position")})
         g["counts"][price_units] = g["counts"].get(price_units, 0) + 1
-    return groups
+    return groups, inactive
 
 
 async def _reprice_group(g: dict, floor: int, competitor: int | None) -> None:
@@ -192,10 +215,15 @@ async def _apply(hash_name: str, lot: dict, target: int, competitor: int, floor:
 
 async def _cycle() -> None:
     global _book_disc
-    groups = await _build_groups()
-    if groups is None:
+    built = await _build_groups()
+    if built is None:
         logger.warning("repricer: /items failed — skip cycle")
         return
+    groups, inactive = built
+    state.repricer_inactive = inactive
+    if not groups:
+        logger.debug("repricer: активных лотов (status=1) нет — переоценивать нечего "
+                     "({} неактивных)", len(inactive))
 
     view: dict[int, dict] = {}
     for nid, g in groups.items():
@@ -232,9 +260,11 @@ async def _cycle() -> None:
 async def refresh_view() -> bool:
     """Разовое обновление снапшота из /items без переоценки (для кнопки Refresh
     в меню «Продажа»). True — успех."""
-    groups = await _build_groups()
-    if groups is None:
+    built = await _build_groups()
+    if built is None:
         return False
+    groups, inactive = built
+    state.repricer_inactive = inactive
     view: dict[int, dict] = {}
     for nid, g in groups.items():
         floor = state.get_floor(nid)

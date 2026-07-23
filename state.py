@@ -119,6 +119,10 @@ repricer_floors: dict[int, int] = {}
 #    my_min_units, competitor_units, is_top, floor_units, updated_ts}
 repricer_view: dict[int, dict] = {}
 
+# Лоты из /items, которые НЕ на продаже (status != 1) — только для показа в меню,
+# чтобы было видно, почему репрайсер их не трогает. Список {label, status, price_units}.
+repricer_inactive: list[dict] = []
+
 
 def set_floor(name_id: int, floor_units: int) -> None:
     repricer_floors[name_id] = floor_units

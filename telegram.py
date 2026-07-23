@@ -142,14 +142,34 @@ def _book_lines(nid: int) -> list[str]:
     return lines
 
 
+def _inactive_lines() -> list[str]:
+    """Лоты не на продаже — показываем со статусом, чтобы было понятно,
+    почему репрайсер их не трогает."""
+    import repricer  # локальный импорт: избегаем циклической зависимости
+    inactive = state.repricer_inactive
+    if not inactive:
+        return []
+    lines = ["", f"<i>Не на продаже ({len(inactive)}):</i>"]
+    for it in inactive[:10]:
+        if it.get("unresolved"):
+            note = "нет в names.json — репрайс невозможен"
+        else:
+            note = repricer.STATUS_LABELS.get(it.get("status"), f"status {it.get('status')}")
+        lines.append(f"⏳ {_short(it['label'], 24)} — {_fmt(it.get('price_units'))} · {note}")
+    return lines
+
+
 def _sell_text() -> str:
     view = state.repricer_view
     lines = ["<b>🏷 Продажа — репрайсер</b>"]
     armed = state.repricer_armed_count()
     if not view:
         lines.append("")
-        lines.append("<i>Нет активных лотов на продаже</i> (или ещё не обновилось).")
-        lines.append("Нажми Refresh, чтобы подтянуть /items.")
+        lines.append("<i>Нет лотов на продаже</i> (status=1).")
+        lines += _inactive_lines()
+        lines.append("")
+        lines.append("Репрайсер двигает цены только у активных лотов. "
+                     "Нажми Refresh, чтобы подтянуть /items.")
         return "\n".join(lines)
     lines.append(f"вооружено полов: {armed} · лотов: {len(view)}")
     lines.append("")
@@ -169,6 +189,7 @@ def _sell_text() -> str:
             lines.append(f"● <b>{_short(v['label'], 22)}</b>{lots_sfx} — моя {_fmt(my)} · "
                          f"пол {_fmt(floor)} · {top}")
         lines += _book_lines(nid)
+    lines += _inactive_lines()
     return "\n".join(lines)
 
 
