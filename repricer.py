@@ -121,6 +121,40 @@ STATUS_LABELS: dict[int, str] = {
 }
 
 
+_currency_alerted = False
+
+
+async def _currency_ok(items: list[dict]) -> bool:
+    """Сверяем валюту аккаунта (из /items) с MARKET_CURRENCY. При расхождении
+    репрайсер ПОЛНОСТЬЮ останавливается: иначе масштаб units не тот и set-price
+    выставит цену в разы мимо (напр. 2690.88 RUB -> 2690880 units с cur=USD)."""
+    global _currency_alerted
+    acc_cur = None
+    for it in items:
+        c = it.get("currency")
+        if c:
+            acc_cur = str(c).upper()
+            break
+    if acc_cur is None or acc_cur == config.CURRENCY.upper():
+        return True
+
+    logger.error("ВАЛЮТА НЕ СОВПАДАЕТ: аккаунт={}, MARKET_CURRENCY={}. Репрайсер "
+                 "ОСТАНОВЛЕН, чтобы не выставить цены мимо. Задай MARKET_CURRENCY={}",
+                 acc_cur, config.CURRENCY, acc_cur)
+    if not _currency_alerted:
+        _currency_alerted = True
+        try:
+            await telegram.send(
+                f"🛑 <b>Репрайсер остановлен: валюта не совпадает</b>\n"
+                f"Аккаунт торгует в <b>{acc_cur}</b>, а в конфиге "
+                f"<code>MARKET_CURRENCY={config.CURRENCY}</code>.\n"
+                f"Масштаб units разный (RUB=100, USD/EUR=1000) — цены уехали бы мимо. "
+                f"Поставь <code>MARKET_CURRENCY={acc_cur}</code> и перезапусти.")
+        except Exception:
+            logger.debug("currency alert send failed (ignored)")
+    return False
+
+
 async def _build_groups() -> tuple[dict[int, dict], list[dict]] | None:
     """GET /items -> (группы моих АКТИВНЫХ лотов по name_id, список неактивных),
     или None при сбое запроса."""
@@ -135,6 +169,11 @@ async def _build_groups() -> tuple[dict[int, dict], list[dict]] | None:
             logger.info("RAW /items sample #{} :: {}", _items_disc, json.dumps(items[:3])[:1000])
         except Exception:
             logger.info("RAW /items sample #{} (repr) :: {}", _items_disc, repr(items[:3])[:1000])
+
+    # ЗАЩИТА: валюта аккаунта должна совпадать с MARKET_CURRENCY. Иначе масштаб
+    # units другой (RUB=100 vs USD/EUR=1000) и set-price выставит дикую цену.
+    if not await _currency_ok(items):
+        return None
 
     groups: dict[int, dict] = {}
     inactive: list[dict] = []
