@@ -321,8 +321,19 @@ async def run_loop() -> None:
     if not config.REPRICER_ENABLED:
         logger.info("Repricer disabled (REPRICER_ENABLED=0)")
         return
-    logger.info("Repricer started · interval {}s · step {} units · floors in RAM (empty at start)",
-                int(config.REPRICE_INTERVAL_SEC), config.REPRICE_STEP_UNITS)
+    logger.info("Repricer started · interval {}s · step {} units · cur={} scale={} · "
+                "alfaskins={} · read_format={} · floors in RAM (empty at start)",
+                int(config.REPRICE_INTERVAL_SEC), config.REPRICE_STEP_UNITS,
+                config.CURRENCY, config.PRICE_UNITS_SCALE,
+                config.BIDASK_WITH_ALFASKINS, config.MARKET_READ_PRICE_FORMAT)
+    if config.MARKET_READ_PRICE_FORMAT != "value":
+        logger.error("MARKET_READ_PRICE_FORMAT={!r}, а market.csgo отдаёт цены как "
+                     "десятичное значение. При 'units' цены схлопываются в одно число "
+                     "и репрайсер всегда считает себя топом. Поставь value (или убери "
+                     "переменную).", config.MARKET_READ_PRICE_FORMAT)
+    if not config.BIDASK_WITH_ALFASKINS:
+        logger.warning("BIDASK_WITH_ALFASKINS=0 — лоты alfaskins НЕ учитываются как "
+                       "конкуренты, бот не будет подрезать их цены.")
     # дать боту прогреться (names/WS/сессия) перед первым запросом
     await asyncio.sleep(min(config.REPRICE_INTERVAL_SEC, 10.0))
     while True:

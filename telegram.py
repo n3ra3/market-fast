@@ -159,9 +159,21 @@ def _inactive_lines() -> list[str]:
     return lines
 
 
+def _cfg_line() -> str:
+    """Эффективный конфиг репрайсера — чтобы видеть, с чем реально задеплоен бот."""
+    alfa = "вкл" if config.BIDASK_WITH_ALFASKINS else "⚠ВЫКЛ"
+    rf = config.MARKET_READ_PRICE_FORMAT
+    rf_txt = rf if rf == "value" else f"⚠{rf}"
+    return (f"<i>cfg: {config.CURRENCY}·scale {config.PRICE_UNITS_SCALE} · "
+            f"шаг {config.REPRICE_STEP_UNITS} · alfaskins {alfa} · read={rf_txt}</i>")
+
+
 def _sell_text() -> str:
     view = state.repricer_view
-    lines = ["<b>🏷 Продажа — репрайсер</b>"]
+    lines = ["<b>🏷 Продажа — репрайсер</b>", _cfg_line()]
+    if config.MARKET_READ_PRICE_FORMAT != "value":
+        lines.append("⚠️ <b>MARKET_READ_PRICE_FORMAT должен быть <code>value</code></b> — "
+                     "иначе цены схлопываются и бот всегда считает себя топом.")
     armed = state.repricer_armed_count()
     if not view:
         lines.append("")
